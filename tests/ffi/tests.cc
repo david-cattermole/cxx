@@ -6,6 +6,7 @@
 #include <numeric>
 #include <stdexcept>
 #include <string>
+#include <tuple>
 
 extern "C" void cxx_test_suite_set_correct() noexcept;
 extern "C" tests::R *cxx_test_suite_get_box() noexcept;
@@ -131,7 +132,8 @@ const std::vector<uint8_t> &c_return_ref_vector(const C &c) {
 std::vector<uint8_t> &c_return_mut_vector(C &c) { return c.get_v(); }
 
 rust::Vec<uint8_t> c_return_rust_vec() {
-  throw std::runtime_error("unimplemented");
+  rust::Vec<uint8_t> vec{2, 0, 2, 0};
+  return vec;
 }
 
 const rust::Vec<uint8_t> &c_return_ref_rust_vec(const C &c) {
@@ -145,7 +147,7 @@ rust::Vec<uint8_t> &c_return_mut_rust_vec(C &c) {
 }
 
 rust::Vec<rust::String> c_return_rust_vec_string() {
-  throw std::runtime_error("unimplemented");
+  return {"2", "0", "2", "0"};
 }
 
 size_t c_return_identity(size_t n) { return n; }
@@ -655,6 +657,25 @@ extern "C" const char *cxx_run_test() noexcept {
 
   ASSERT(Shared{1} == Shared{1});
   ASSERT(Shared{1} != Shared{2});
+
+  rust::String first = "first", second = "second", sec = "sec";
+  bool (rust::String::*cmp)(const rust::String &) const;
+  bool first_first, first_second, sec_second, second_sec;
+  for (auto test : {
+    std::tuple<decltype(cmp), bool, bool, bool, bool>
+    {&rust::String::operator==, true, false, false, false},
+    {&rust::String::operator!=, false, true, true, true},
+    {&rust::String::operator<, false, true, true, false},
+    {&rust::String::operator<=, true, true, true, false},
+    {&rust::String::operator>, false, false, false, true},
+    {&rust::String::operator>=, true, false, false, true},
+  }) {
+    std::tie(cmp, first_first, first_second, sec_second, second_sec) = test;
+    ASSERT((first.*cmp)(first) == first_first);
+    ASSERT((first.*cmp)(second) == first_second);
+    ASSERT((sec.*cmp)(second) == sec_second);
+    ASSERT((second.*cmp)(sec) == second_sec);
+  }
 
   cxx_test_suite_set_correct();
   return nullptr;

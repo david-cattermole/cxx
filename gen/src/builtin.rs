@@ -71,7 +71,9 @@ pub(super) fn write(out: &mut OutFile) {
     }
 
     if builtin.rust_vec {
+        include.algorithm = true;
         include.array = true;
+        include.initializer_list = true;
         include.iterator = true;
         include.new = true;
         include.type_traits = true;
@@ -113,6 +115,11 @@ pub(super) fn write(out: &mut OutFile) {
         writeln!(out, "template <typename T>");
         writeln!(out, "class impl;");
         out.end_block(Block::AnonymousNamespace);
+    }
+
+    if builtin.rust_str && !builtin.rust_string {
+        out.next_section();
+        writeln!(out, "class String;");
     }
 
     ifndef::write(out, builtin.rust_string, "CXXBRIDGE1_RUST_STRING");

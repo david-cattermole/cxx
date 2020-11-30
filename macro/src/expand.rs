@@ -664,18 +664,15 @@ fn expand_rust_type_assert_sized(ety: &ExternType) -> TokenStream {
 }
 
 fn expand_rust_function_shim(efn: &ExternFn, types: &Types) -> TokenStream {
-    let receiver_type = efn
-        .receiver
-        .iter()
-        .map(|receiver| format!("{}", types.resolve(&receiver.ty).rust))
-        .collect::<Vec<String>>()
-        .join("_");
     let link_name = mangle::extern_fn(efn, types);
-    let local_name = match receiver_type.len() {
-        0 => format_ident!("__{}", efn.name.rust),
-        _ => format_ident!("__{}_{}", receiver_type, efn.name.rust),
+    let local_name = match &efn.receiver {
+        None => format_ident!("__{}", efn.name.rust),
+        Some(receiver) => format_ident!("__{}__{}", receiver.ty.rust, efn.name.rust),
     };
-    let catch_unwind_label = format!("::{}", efn.name.rust);
+    let catch_unwind_label = match &efn.receiver {
+        None => format!("::{}", efn.name.rust),
+        Some(receiver) => format!("::{}::{}", receiver.ty.rust, efn.name.rust),
+    };
     let invoke = Some(&efn.name.rust);
     expand_rust_function_shim_impl(
         efn,

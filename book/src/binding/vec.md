@@ -6,6 +6,7 @@
 ```cpp,hidelines
 // rust/cxx.h
 #
+# #include <initializer_list>
 # #include <iterator>
 # #include <type_traits>
 #
@@ -17,6 +18,7 @@ public:
   using value_type = T;
 
   Vec() noexcept;
+  Vec(std::initializer_list<T>);
   Vec(Vec &&) noexcept;
   ~Vec() noexcept;
 
@@ -29,9 +31,13 @@ public:
 
   const T &operator[](size_t n) const noexcept;
   const T &at(size_t n) const;
-
   const T &front() const;
   const T &back() const;
+
+  T &operator[](size_t n) noexcept;
+  T &at(size_t n);
+  T &front();
+  T &back();
 
   void reserve(size_t new_cap);
   void push_back(const T &value);

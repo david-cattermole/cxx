@@ -15,6 +15,7 @@ class Str final {
 public:
   Str() noexcept;
   Str(const Str &) noexcept;
+  Str(const String &) noexcept;
 
   // Throws std::invalid_argument if not utf-8.
   Str(const std::string &);
@@ -36,6 +37,13 @@ public:
   const_iterator end() const noexcept;
   const_iterator cbegin() const noexcept;
   const_iterator cend() const noexcept;
+
+  bool operator==(const Str &) const noexcept;
+  bool operator!=(const Str &) const noexcept;
+  bool operator<(const Str &) const noexcept;
+  bool operator<=(const Str &) const noexcept;
+  bool operator>(const Str &) const noexcept;
+  bool operator>=(const Str &) const noexcept;
 };
 
 std::ostream &operator<<(std::ostream &, const Str &);
