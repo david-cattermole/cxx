@@ -9,8 +9,9 @@
 pub mod cast;
 pub mod module;
 
-use cxx::{CxxString, CxxVector, UniquePtr};
+use cxx::{CxxString, CxxVector, SharedPtr, UniquePtr};
 use std::fmt::{self, Display};
+use std::mem::MaybeUninit;
 use std::os::raw::c_char;
 
 #[cxx::bridge(namespace = "tests")]
@@ -25,7 +26,7 @@ pub mod ffi {
         msg: String,
     }
 
-    #[derive(Debug, Hash)]
+    #[derive(Debug, Hash, PartialOrd, Ord)]
     enum Enum {
         AVal,
         BVal = 2020,
@@ -33,7 +34,7 @@ pub mod ffi {
     }
 
     #[namespace = "A"]
-    #[derive(Clone)]
+    #[derive(Copy, Clone, Default)]
     struct AShared {
         z: usize,
     }
@@ -83,6 +84,7 @@ pub mod ffi {
         fn c_return_shared() -> Shared;
         fn c_return_box() -> Box<R>;
         fn c_return_unique_ptr() -> UniquePtr<C>;
+        fn c_return_shared_ptr() -> SharedPtr<C>;
         fn c_return_ref(shared: &Shared) -> &usize;
         fn c_return_mut(shared: &mut Shared) -> &mut usize;
         fn c_return_str(shared: &Shared) -> &str;
@@ -131,6 +133,7 @@ pub mod ffi {
         fn c_take_rust_vec_shared_index(v: Vec<Shared>);
         fn c_take_rust_vec_shared_push(v: Vec<Shared>);
         fn c_take_rust_vec_shared_forward_iterator(v: Vec<Shared>);
+        fn c_take_rust_vec_shared_sort(v: Vec<Shared>);
         fn c_take_ref_rust_vec(v: &Vec<u8>);
         fn c_take_ref_rust_vec_string(v: &Vec<String>);
         fn c_take_ref_rust_vec_index(v: &Vec<u8>);
@@ -181,7 +184,10 @@ pub mod ffi {
     }
 
     extern "C++" {
+        include!("tests/ffi/module.rs.h");
+
         type COwnedEnum;
+        type Job = crate::module::ffi::Job;
     }
 
     #[repr(u32)]
@@ -198,6 +204,7 @@ pub mod ffi {
         fn r_return_shared() -> Shared;
         fn r_return_box() -> Box<R>;
         fn r_return_unique_ptr() -> UniquePtr<C>;
+        fn r_return_shared_ptr() -> SharedPtr<C>;
         fn r_return_ref(shared: &Shared) -> &usize;
         fn r_return_mut(shared: &mut Shared) -> &mut usize;
         fn r_return_str(shared: &Shared) -> &str;
@@ -207,6 +214,7 @@ pub mod ffi {
         fn r_return_unique_ptr_string() -> UniquePtr<CxxString>;
         fn r_return_rust_vec() -> Vec<u8>;
         fn r_return_rust_vec_string() -> Vec<String>;
+        fn r_return_rust_vec_extern_struct() -> Vec<Job>;
         fn r_return_ref_rust_vec(shared: &Shared) -> &Vec<u8>;
         fn r_return_mut_rust_vec(shared: &mut Shared) -> &mut Vec<u8>;
         fn r_return_identity(_: usize) -> usize;
@@ -217,6 +225,7 @@ pub mod ffi {
         fn r_take_shared(shared: Shared);
         fn r_take_box(r: Box<R>);
         fn r_take_unique_ptr(c: UniquePtr<C>);
+        fn r_take_shared_ptr(c: SharedPtr<C>);
         fn r_take_ref_r(r: &R);
         fn r_take_ref_c(c: &C);
         fn r_take_str(s: &str);
@@ -377,6 +386,18 @@ fn r_return_unique_ptr() -> UniquePtr<ffi::C> {
     unsafe { UniquePtr::from_raw(cxx_test_suite_get_unique_ptr()) }
 }
 
+fn r_return_shared_ptr() -> SharedPtr<ffi::C> {
+    extern "C" {
+        fn cxx_test_suite_get_shared_ptr(repr: *mut SharedPtr<ffi::C>);
+    }
+    let mut shared_ptr = MaybeUninit::<SharedPtr<ffi::C>>::uninit();
+    let repr = shared_ptr.as_mut_ptr();
+    unsafe {
+        cxx_test_suite_get_shared_ptr(repr);
+        shared_ptr.assume_init()
+    }
+}
+
 fn r_return_ref(shared: &ffi::Shared) -> &usize {
     &shared.z
 }
@@ -415,6 +436,10 @@ fn r_return_rust_vec() -> Vec<u8> {
 }
 
 fn r_return_rust_vec_string() -> Vec<String> {
+    Vec::new()
+}
+
+fn r_return_rust_vec_extern_struct() -> Vec<ffi::Job> {
     Vec::new()
 }
 
@@ -459,6 +484,10 @@ fn r_take_box(r: Box<R>) {
 }
 
 fn r_take_unique_ptr(c: UniquePtr<ffi::C>) {
+    let _ = c;
+}
+
+fn r_take_shared_ptr(c: SharedPtr<ffi::C>) {
     let _ = c;
 }
 

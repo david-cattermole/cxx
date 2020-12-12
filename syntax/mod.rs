@@ -15,6 +15,7 @@ pub mod mangle;
 mod names;
 pub mod namespace;
 mod parse;
+mod pod;
 pub mod qualified;
 pub mod report;
 pub mod set;
@@ -150,7 +151,7 @@ pub struct Receiver {
     pub lifetime: Option<Lifetime>,
     pub mutable: bool,
     pub var: Token![self],
-    pub ty: ResolvableName,
+    pub ty: RustName,
     pub shorthand: bool,
     pub pin_tokens: Option<(kw::Pin, Token![<], Token![>])>,
     pub mutability: Option<Token![mut]>,
@@ -163,10 +164,11 @@ pub struct Variant {
 }
 
 pub enum Type {
-    Ident(ResolvableName),
+    Ident(RustName),
     RustBox(Box<Ty1>),
     RustVec(Box<Ty1>),
     UniquePtr(Box<Ty1>),
+    SharedPtr(Box<Ty1>),
     Ref(Box<Ref>),
     Str(Box<Ref>),
     CxxVector(Box<Ty1>),
@@ -227,7 +229,8 @@ pub struct Pair {
 
 // Wrapper for a type which needs to be resolved before it can be printed in
 // C++.
-#[derive(Clone, PartialEq, Hash)]
-pub struct ResolvableName {
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[repr(transparent)]
+pub struct RustName {
     pub rust: Ident,
 }

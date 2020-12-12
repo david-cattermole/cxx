@@ -1,5 +1,9 @@
 #[cxx::bridge(namespace = "tests")]
 pub mod ffi {
+    struct Job {
+        raw: u32,
+    }
+
     unsafe extern "C++" {
         include!("tests/ffi/tests.h");
 
@@ -7,6 +11,8 @@ pub mod ffi {
 
         fn c_take_unique_ptr(c: UniquePtr<C>);
     }
+
+    impl Vec<Job> {}
 }
 
 #[cxx::bridge(namespace = "tests")]

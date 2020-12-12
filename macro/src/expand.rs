@@ -4,8 +4,8 @@ use crate::syntax::file::Module;
 use crate::syntax::report::Errors;
 use crate::syntax::symbol::Symbol;
 use crate::syntax::{
-    self, check, mangle, Api, Enum, ExternFn, ExternType, Impl, Pair, ResolvableName, Signature,
-    Struct, Trait, Type, TypeAlias, Types,
+    self, check, mangle, Api, Enum, ExternFn, ExternType, Impl, Pair, RustName, Signature, Struct,
+    Trait, Type, TypeAlias, Types,
 };
 use proc_macro2::{Ident, Span, TokenStream};
 use quote::{format_ident, quote, quote_spanned, ToTokens};
@@ -68,13 +68,17 @@ fn expand(ffi: Module, apis: &[Api], types: &Types) -> TokenStream {
         let explicit_impl = types.explicit_impls.get(ty);
         if let Type::RustBox(ty) = ty {
             if let Type::Ident(ident) = &ty.inner {
-                if Atom::from(&ident.rust).is_none() {
+                if Atom::from(&ident.rust).is_none()
+                    && (explicit_impl.is_some() || !types.aliases.contains_key(&ident.rust))
+                {
                     hidden.extend(expand_rust_box(ident, types));
                 }
             }
         } else if let Type::RustVec(ty) = ty {
             if let Type::Ident(ident) = &ty.inner {
-                if Atom::from(&ident.rust).is_none() {
+                if Atom::from(&ident.rust).is_none()
+                    && (explicit_impl.is_some() || !types.aliases.contains_key(&ident.rust))
+                {
                     hidden.extend(expand_rust_vec(ident, types));
                 }
             }
@@ -84,6 +88,14 @@ fn expand(ffi: Module, apis: &[Api], types: &Types) -> TokenStream {
                     && (explicit_impl.is_some() || !types.aliases.contains_key(&ident.rust))
                 {
                     expanded.extend(expand_unique_ptr(ident, types, explicit_impl));
+                }
+            }
+        } else if let Type::SharedPtr(ptr) = ty {
+            if let Type::Ident(ident) = &ptr.inner {
+                if Atom::from(&ident.rust).is_none()
+                    && (explicit_impl.is_some() || !types.aliases.contains_key(&ident.rust))
+                {
+                    expanded.extend(expand_shared_ptr(ident, types, explicit_impl));
                 }
             }
         } else if let Type::CxxVector(ptr) = ty {
@@ -937,7 +949,7 @@ fn type_id(name: &Pair) -> TokenStream {
     }
 }
 
-fn expand_rust_box(ident: &ResolvableName, types: &Types) -> TokenStream {
+fn expand_rust_box(ident: &RustName, types: &Types) -> TokenStream {
     let link_prefix = format!("cxxbridge1$box${}$", types.resolve(ident).to_symbol());
     let link_uninit = format!("{}uninit", link_prefix);
     let link_drop = format!("{}drop", link_prefix);
@@ -948,6 +960,8 @@ fn expand_rust_box(ident: &ResolvableName, types: &Types) -> TokenStream {
 
     let span = ident.span();
     quote_spanned! {span=>
+        #[doc(hidden)]
+        unsafe impl ::cxx::private::ImplBox for #ident {}
         #[doc(hidden)]
         #[export_name = #link_uninit]
         unsafe extern "C" fn #local_uninit(
@@ -966,11 +980,12 @@ fn expand_rust_box(ident: &ResolvableName, types: &Types) -> TokenStream {
     }
 }
 
-fn expand_rust_vec(elem: &ResolvableName, types: &Types) -> TokenStream {
+fn expand_rust_vec(elem: &RustName, types: &Types) -> TokenStream {
     let link_prefix = format!("cxxbridge1$rust_vec${}$", elem.to_symbol(types));
     let link_new = format!("{}new", link_prefix);
     let link_drop = format!("{}drop", link_prefix);
     let link_len = format!("{}len", link_prefix);
+    let link_capacity = format!("{}capacity", link_prefix);
     let link_data = format!("{}data", link_prefix);
     let link_reserve_total = format!("{}reserve_total", link_prefix);
     let link_set_len = format!("{}set_len", link_prefix);
@@ -980,6 +995,7 @@ fn expand_rust_vec(elem: &ResolvableName, types: &Types) -> TokenStream {
     let local_new = format_ident!("{}new", local_prefix);
     let local_drop = format_ident!("{}drop", local_prefix);
     let local_len = format_ident!("{}len", local_prefix);
+    let local_capacity = format_ident!("{}capacity", local_prefix);
     let local_data = format_ident!("{}data", local_prefix);
     let local_reserve_total = format_ident!("{}reserve_total", local_prefix);
     let local_set_len = format_ident!("{}set_len", local_prefix);
@@ -987,6 +1003,8 @@ fn expand_rust_vec(elem: &ResolvableName, types: &Types) -> TokenStream {
 
     let span = elem.span();
     quote_spanned! {span=>
+        #[doc(hidden)]
+        unsafe impl ::cxx::private::ImplVec for #elem {}
         #[doc(hidden)]
         #[export_name = #link_new]
         unsafe extern "C" fn #local_new(this: *mut ::cxx::private::RustVec<#elem>) {
@@ -1001,6 +1019,11 @@ fn expand_rust_vec(elem: &ResolvableName, types: &Types) -> TokenStream {
         #[export_name = #link_len]
         unsafe extern "C" fn #local_len(this: *const ::cxx::private::RustVec<#elem>) -> usize {
             (*this).len()
+        }
+        #[doc(hidden)]
+        #[export_name = #link_capacity]
+        unsafe extern "C" fn #local_capacity(this: *const ::cxx::private::RustVec<#elem>) -> usize {
+            (*this).capacity()
         }
         #[doc(hidden)]
         #[export_name = #link_data]
@@ -1025,15 +1048,11 @@ fn expand_rust_vec(elem: &ResolvableName, types: &Types) -> TokenStream {
     }
 }
 
-fn expand_unique_ptr(
-    ident: &ResolvableName,
-    types: &Types,
-    explicit_impl: Option<&Impl>,
-) -> TokenStream {
+fn expand_unique_ptr(ident: &RustName, types: &Types, explicit_impl: Option<&Impl>) -> TokenStream {
     let name = ident.rust.to_string();
     let prefix = format!("cxxbridge1$unique_ptr${}$", ident.to_symbol(types));
     let link_null = format!("{}null", prefix);
-    let link_new = format!("{}new", prefix);
+    let link_uninit = format!("{}uninit", prefix);
     let link_raw = format!("{}raw", prefix);
     let link_get = format!("{}get", prefix);
     let link_release = format!("{}release", prefix);
@@ -1044,13 +1063,13 @@ fn expand_unique_ptr(
         || types.aliases.contains_key(&ident.rust);
     let new_method = if can_construct_from_value {
         Some(quote! {
-            fn __new(mut value: Self) -> *mut ::std::ffi::c_void {
+            fn __new(value: Self) -> *mut ::std::ffi::c_void {
                 extern "C" {
-                    #[link_name = #link_new]
-                    fn __new(this: *mut *mut ::std::ffi::c_void, value: *mut #ident);
+                    #[link_name = #link_uninit]
+                    fn __uninit(this: *mut *mut ::std::ffi::c_void) -> *mut ::std::ffi::c_void;
                 }
                 let mut repr = ::std::ptr::null_mut::<::std::ffi::c_void>();
-                unsafe { __new(&mut repr, &mut value) }
+                unsafe { __uninit(&mut repr).cast::<#ident>().write(value) }
                 repr
             }
         })
@@ -1079,25 +1098,25 @@ fn expand_unique_ptr(
             unsafe fn __raw(raw: *mut Self) -> *mut ::std::ffi::c_void {
                 extern "C" {
                     #[link_name = #link_raw]
-                    fn __raw(this: *mut *mut ::std::ffi::c_void, raw: *mut #ident);
+                    fn __raw(this: *mut *mut ::std::ffi::c_void, raw: *mut ::std::ffi::c_void);
                 }
                 let mut repr = ::std::ptr::null_mut::<::std::ffi::c_void>();
-                __raw(&mut repr, raw);
+                __raw(&mut repr, raw.cast());
                 repr
             }
             unsafe fn __get(repr: *mut ::std::ffi::c_void) -> *const Self {
                 extern "C" {
                     #[link_name = #link_get]
-                    fn __get(this: *const *mut ::std::ffi::c_void) -> *const #ident;
+                    fn __get(this: *const *mut ::std::ffi::c_void) -> *const ::std::ffi::c_void;
                 }
-                __get(&repr)
+                __get(&repr).cast()
             }
             unsafe fn __release(mut repr: *mut ::std::ffi::c_void) -> *mut Self {
                 extern "C" {
                     #[link_name = #link_release]
-                    fn __release(this: *mut *mut ::std::ffi::c_void) -> *mut #ident;
+                    fn __release(this: *mut *mut ::std::ffi::c_void) -> *mut ::std::ffi::c_void;
                 }
-                __release(&mut repr)
+                __release(&mut repr).cast()
             }
             unsafe fn __drop(mut repr: *mut ::std::ffi::c_void) {
                 extern "C" {
@@ -1110,11 +1129,74 @@ fn expand_unique_ptr(
     }
 }
 
-fn expand_cxx_vector(
-    elem: &ResolvableName,
-    explicit_impl: Option<&Impl>,
-    types: &Types,
-) -> TokenStream {
+fn expand_shared_ptr(ident: &RustName, types: &Types, explicit_impl: Option<&Impl>) -> TokenStream {
+    let name = ident.rust.to_string();
+    let prefix = format!("cxxbridge1$shared_ptr${}$", ident.to_symbol(types));
+    let link_null = format!("{}null", prefix);
+    let link_uninit = format!("{}uninit", prefix);
+    let link_clone = format!("{}clone", prefix);
+    let link_get = format!("{}get", prefix);
+    let link_drop = format!("{}drop", prefix);
+
+    let can_construct_from_value = types.structs.contains_key(&ident.rust)
+        || types.enums.contains_key(&ident.rust)
+        || types.aliases.contains_key(&ident.rust);
+    let new_method = if can_construct_from_value {
+        Some(quote! {
+            unsafe fn __new(value: Self, new: *mut ::std::ffi::c_void) {
+                extern "C" {
+                    #[link_name = #link_uninit]
+                    fn __uninit(new: *mut ::std::ffi::c_void) -> *mut ::std::ffi::c_void;
+                }
+                __uninit(new).cast::<#ident>().write(value);
+            }
+        })
+    } else {
+        None
+    };
+
+    let begin_span =
+        explicit_impl.map_or_else(Span::call_site, |explicit| explicit.impl_token.span);
+    let end_span = explicit_impl.map_or_else(Span::call_site, |explicit| explicit.brace_token.span);
+    let unsafe_token = format_ident!("unsafe", span = begin_span);
+
+    quote_spanned! {end_span=>
+        #unsafe_token impl ::cxx::private::SharedPtrTarget for #ident {
+            const __NAME: &'static dyn ::std::fmt::Display = &#name;
+            unsafe fn __null(new: *mut ::std::ffi::c_void) {
+                extern "C" {
+                    #[link_name = #link_null]
+                    fn __null(new: *mut ::std::ffi::c_void);
+                }
+                __null(new);
+            }
+            #new_method
+            unsafe fn __clone(this: *const ::std::ffi::c_void, new: *mut ::std::ffi::c_void) {
+                extern "C" {
+                    #[link_name = #link_clone]
+                    fn __clone(this: *const ::std::ffi::c_void, new: *mut ::std::ffi::c_void);
+                }
+                __clone(this, new);
+            }
+            unsafe fn __get(this: *const ::std::ffi::c_void) -> *const Self {
+                extern "C" {
+                    #[link_name = #link_get]
+                    fn __get(this: *const ::std::ffi::c_void) -> *const ::std::ffi::c_void;
+                }
+                __get(this).cast()
+            }
+            unsafe fn __drop(this: *mut ::std::ffi::c_void) {
+                extern "C" {
+                    #[link_name = #link_drop]
+                    fn __drop(this: *mut ::std::ffi::c_void);
+                }
+                __drop(this);
+            }
+        }
+    }
+}
+
+fn expand_cxx_vector(elem: &RustName, explicit_impl: Option<&Impl>, types: &Types) -> TokenStream {
     let _ = explicit_impl;
     let name = elem.rust.to_string();
     let prefix = format!("cxxbridge1$std$vector${}$", elem.to_symbol(types));

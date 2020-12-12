@@ -1,10 +1,8 @@
-use crate::syntax::atom::Atom::{self, *};
 use crate::syntax::improper::ImproperCtype;
 use crate::syntax::report::Errors;
 use crate::syntax::set::{OrderedSet as Set, UnorderedSet};
 use crate::syntax::{
-    derive, toposort, Api, Enum, ExternFn, ExternType, Impl, Pair, ResolvableName, Struct, Trait,
-    Type, TypeAlias,
+    toposort, Api, Enum, ExternFn, ExternType, Impl, Pair, RustName, Struct, Type, TypeAlias,
 };
 use proc_macro2::Ident;
 use quote::ToTokens;
@@ -20,7 +18,7 @@ pub struct Types<'a> {
     pub untrusted: Map<&'a Ident, &'a ExternType>,
     pub required_trivial: Map<&'a Ident, TrivialReason<'a>>,
     pub explicit_impls: Set<&'a Impl>,
-    pub resolutions: Map<&'a Ident, &'a Pair>,
+    pub resolutions: Map<&'a RustName, &'a Pair>,
     pub struct_improper_ctypes: UnorderedSet<&'a Ident>,
     pub toposorted_structs: Vec<&'a Struct>,
 }
@@ -45,6 +43,7 @@ impl<'a> Types<'a> {
                 Type::Ident(_) | Type::Str(_) | Type::Void(_) => {}
                 Type::RustBox(ty)
                 | Type::UniquePtr(ty)
+                | Type::SharedPtr(ty)
                 | Type::CxxVector(ty)
                 | Type::RustVec(ty) => visit(all, &ty.inner),
                 Type::Ref(r) => visit(all, &r.inner),
@@ -62,7 +61,7 @@ impl<'a> Types<'a> {
         }
 
         let mut add_resolution = |pair: &'a Pair| {
-            resolutions.insert(&pair.rust, pair);
+            resolutions.insert(RustName::from_ref(&pair.rust), pair);
         };
 
         let mut type_names = UnorderedSet::new();
@@ -200,6 +199,19 @@ impl<'a> Types<'a> {
                 _ => {}
             }
         }
+        for ty in &all {
+            match ty {
+                Type::RustBox(ty) => {
+                    let reason = TrivialReason::BoxTarget;
+                    insist_alias_types_are_trivial(&ty.inner, reason);
+                }
+                Type::RustVec(ty) => {
+                    let reason = TrivialReason::VecElement;
+                    insist_alias_types_are_trivial(&ty.inner, reason);
+                }
+                _ => {}
+            }
+        }
 
         let mut types = Types {
             all,
@@ -247,20 +259,10 @@ impl<'a> Types<'a> {
 
     pub fn needs_indirect_abi(&self, ty: &Type) -> bool {
         match ty {
-            Type::Ident(ident) => {
-                if let Some(strct) = self.structs.get(&ident.rust) {
-                    !self.is_pod(strct)
-                } else {
-                    Atom::from(&ident.rust) == Some(RustString)
-                }
-            }
-            Type::RustVec(_) | Type::Array(_) => true,
-            _ => false,
+            Type::RustBox(_) | Type::UniquePtr(_) => false,
+            Type::Array(_) => true,
+            _ => !self.is_guaranteed_pod(ty),
         }
-    }
-
-    pub fn is_pod(&self, strct: &Struct) -> bool {
-        derive::contains(&strct.derives, Trait::Copy)
     }
 
     // Types that trigger rustc's default #[warn(improper_ctypes)] lint, even if
@@ -276,10 +278,8 @@ impl<'a> Types<'a> {
         }
     }
 
-    pub fn resolve(&self, ident: &ResolvableName) -> &Pair {
-        self.resolutions
-            .get(&ident.rust)
-            .expect("Unable to resolve type")
+    pub fn resolve(&self, ident: &RustName) -> &Pair {
+        self.resolutions.get(ident).expect("Unable to resolve type")
     }
 }
 
@@ -296,6 +296,8 @@ pub enum TrivialReason<'a> {
     StructField(&'a Struct),
     FunctionArgument(&'a ExternFn),
     FunctionReturn(&'a ExternFn),
+    BoxTarget,
+    VecElement,
 }
 
 fn duplicate_name(cx: &mut Errors, sp: impl ToTokens, ident: &Ident) {
