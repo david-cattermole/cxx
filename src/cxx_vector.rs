@@ -1,12 +1,19 @@
-use crate::cxx_string::CxxString;
+//! Less used details of `CxxVector` are exposed in this module. `CxxVector`
+//! itself is exposed at the crate root.
+
 use crate::extern_type::ExternType;
 use crate::kind::Trivial;
+use crate::string::CxxString;
 use core::ffi::c_void;
 use core::fmt::{self, Debug, Display};
+use core::iter::FusedIterator;
 use core::marker::{PhantomData, PhantomPinned};
 use core::mem;
 use core::ptr;
 use core::slice;
+
+#[doc(inline)]
+pub use crate::Vector;
 
 /// Binding to C++ `std::vector<T, std::allocator<T>>`.
 ///
@@ -94,6 +101,9 @@ where
     }
 }
 
+/// Iterator over elements of a `CxxVector` by shared reference.
+///
+/// The iterator element type is `&'a T`.
 pub struct Iter<'a, T> {
     v: &'a CxxVector<T>,
     index: usize,
@@ -119,10 +129,26 @@ where
 
     fn next(&mut self) -> Option<Self::Item> {
         let next = self.v.get(self.index);
-        self.index += 1;
+        self.index += next.is_some() as usize;
         next
     }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let len = self.len();
+        (len, Some(len))
+    }
 }
+
+impl<'a, T> ExactSizeIterator for Iter<'a, T>
+where
+    T: VectorElement,
+{
+    fn len(&self) -> usize {
+        self.v.len() - self.index
+    }
+}
+
+impl<'a, T> FusedIterator for Iter<'a, T> where T: VectorElement {}
 
 impl<T> Debug for CxxVector<T>
 where
@@ -133,7 +159,7 @@ where
     }
 }
 
-pub struct TypeName<T> {
+pub(crate) struct TypeName<T> {
     element: PhantomData<T>,
 }
 

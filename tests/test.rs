@@ -210,9 +210,13 @@ fn test_c_method_calls() {
     assert_eq!(2021, unique_ptr.pin_mut().set(2021));
     assert_eq!(2021, unique_ptr.get());
     assert_eq!(2021, unique_ptr.get2());
+    assert_eq!(2021, *unique_ptr.getRef());
+    assert_eq!(2021, *unique_ptr.pin_mut().getMut());
     assert_eq!(2022, unique_ptr.pin_mut().set_succeed(2022).unwrap());
     assert!(unique_ptr.pin_mut().get_fail().is_err());
     assert_eq!(2021, ffi::Shared { z: 0 }.c_method_on_shared());
+    assert_eq!(2022, *ffi::Shared { z: 2022 }.c_method_ref_on_shared());
+    assert_eq!(2023, *ffi::Shared { z: 2023 }.c_method_mut_on_shared());
 
     let val = 42;
     let mut array = ffi::Array { a: [0, 0, 0, 0] };
@@ -263,10 +267,14 @@ fn test_rust_name_attribute() {
 
 #[test]
 fn test_extern_trivial() {
-    let d = ffi2::c_return_trivial();
+    let mut d = ffi2::c_return_trivial();
     check!(ffi2::c_take_trivial_ref(&d));
+    check!(d.c_take_trivial_ref_method());
+    check!(d.c_take_trivial_mut_ref_method());
     check!(ffi2::c_take_trivial(d));
-    let d = ffi2::c_return_trivial_ptr();
+    let mut d = ffi2::c_return_trivial_ptr();
+    check!(d.c_take_trivial_ref_method());
+    check!(d.c_take_trivial_mut_ref_method());
     check!(ffi2::c_take_trivial_ptr(d));
     cxx::UniquePtr::new(ffi2::D { d: 42 });
     let d = ffi2::ns_c_return_trivial();
@@ -282,8 +290,10 @@ fn test_extern_trivial() {
 
 #[test]
 fn test_extern_opaque() {
-    let e = ffi2::c_return_opaque_ptr();
+    let mut e = ffi2::c_return_opaque_ptr();
     check!(ffi2::c_take_opaque_ref(e.as_ref().unwrap()));
+    check!(e.c_take_opaque_ref_method());
+    check!(e.pin_mut().c_take_opaque_mut_ref_method());
     check!(ffi2::c_take_opaque_ptr(e));
 
     let f = ffi2::c_return_ns_opaque_ptr();

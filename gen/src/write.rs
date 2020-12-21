@@ -4,6 +4,7 @@ use crate::gen::out::OutFile;
 use crate::gen::{builtin, include, Opt};
 use crate::syntax::atom::Atom::{self, *};
 use crate::syntax::symbol::Symbol;
+use crate::syntax::trivial::TrivialReason;
 use crate::syntax::{
     derive, mangle, Api, Enum, ExternFn, ExternType, Pair, RustName, Signature, Struct, Trait,
     Type, Types, Var,
@@ -117,8 +118,8 @@ fn write_data_structures<'a>(out: &mut OutFile<'a>, apis: &'a [Api]) {
     out.next_section();
     for api in apis {
         if let Api::TypeAlias(ety) = api {
-            if out.types.required_trivial.contains_key(&ety.name.rust) {
-                check_trivial_extern_type(out, &ety.name)
+            if let Some(reasons) = out.types.required_trivial.get(&ety.name.rust) {
+                check_trivial_extern_type(out, &ety.name, reasons)
             }
         }
     }
@@ -164,7 +165,7 @@ fn write_std_specializations(out: &mut OutFile, apis: &[Api]) {
                 writeln!(out, "template <> struct hash<{}> {{", qualified);
                 writeln!(
                     out,
-                    "  size_t operator()(const {} &self) const noexcept {{",
+                    "  ::std::size_t operator()(const {} &self) const noexcept {{",
                     qualified,
                 );
                 let link_name = mangle::operator(&strct.name, "hash");
@@ -369,7 +370,7 @@ fn check_enum<'a>(out: &mut OutFile<'a>, enm: &'a Enum) {
     }
 }
 
-fn check_trivial_extern_type(out: &mut OutFile, id: &Pair) {
+fn check_trivial_extern_type(out: &mut OutFile, id: &Pair, reasons: &[TrivialReason]) {
     // NOTE: The following static assertion is just nice-to-have and not
     // necessary for soundness. That's because triviality is always declared by
     // the user in the form of an unsafe impl of cxx::ExternType:
@@ -405,13 +406,16 @@ fn check_trivial_extern_type(out: &mut OutFile, id: &Pair) {
 
     let id = id.to_fully_qualified();
     out.builtin.relocatable = true;
-    writeln!(out, "static_assert(");
-    writeln!(out, "    ::rust::IsRelocatable<{}>::value,", id);
-    writeln!(
-        out,
-        "    \"type {} marked as Trivial in Rust is not trivially move constructible and trivially destructible in C++\");",
-        id,
-    );
+    for reason in reasons {
+        writeln!(out, "static_assert(");
+        writeln!(out, "    ::rust::IsRelocatable<{}>::value,", id);
+        writeln!(
+            out,
+            "    \"type {} is not move constructible and trivially destructible in C++ yet is used as a trivial type in Rust ({})\");",
+            id.trim_start_matches("::"),
+            reason,
+        );
+    }
 }
 
 fn write_struct_operator_decls<'a>(out: &mut OutFile<'a>, strct: &'a Struct) {
@@ -473,7 +477,7 @@ fn write_struct_operator_decls<'a>(out: &mut OutFile<'a>, strct: &'a Struct) {
         let link_name = mangle::operator(&strct.name, "hash");
         writeln!(
             out,
-            "size_t {}(const {} &) noexcept;",
+            "::std::size_t {}(const {} &) noexcept;",
             link_name, strct.name.cxx,
         );
     }
@@ -1165,15 +1169,15 @@ fn write_atom(out: &mut OutFile, atom: Atom) {
     match atom {
         Bool => write!(out, "bool"),
         Char => write!(out, "char"),
-        U8 => write!(out, "uint8_t"),
-        U16 => write!(out, "uint16_t"),
-        U32 => write!(out, "uint32_t"),
-        U64 => write!(out, "uint64_t"),
-        Usize => write!(out, "size_t"),
-        I8 => write!(out, "int8_t"),
-        I16 => write!(out, "int16_t"),
-        I32 => write!(out, "int32_t"),
-        I64 => write!(out, "int64_t"),
+        U8 => write!(out, "::std::uint8_t"),
+        U16 => write!(out, "::std::uint16_t"),
+        U32 => write!(out, "::std::uint32_t"),
+        U64 => write!(out, "::std::uint64_t"),
+        Usize => write!(out, "::std::size_t"),
+        I8 => write!(out, "::std::int8_t"),
+        I16 => write!(out, "::std::int16_t"),
+        I32 => write!(out, "::std::int32_t"),
+        I64 => write!(out, "::std::int64_t"),
         Isize => write!(out, "::rust::isize"),
         F32 => write!(out, "float"),
         F64 => write!(out, "double"),
@@ -1348,7 +1352,12 @@ fn write_rust_box_extern(out: &mut OutFile, ident: &Pair) {
     writeln!(out, "#define CXXBRIDGE1_RUST_BOX_{}", instance);
     writeln!(
         out,
-        "void cxxbridge1$box${}$uninit(::rust::Box<{}> *ptr) noexcept;",
+        "{} *cxxbridge1$box${}$alloc() noexcept;",
+        inner, instance,
+    );
+    writeln!(
+        out,
+        "void cxxbridge1$box${}$dealloc({} *) noexcept;",
         instance, inner,
     );
     writeln!(
@@ -1379,12 +1388,12 @@ fn write_rust_vec_extern(out: &mut OutFile, element: &RustName) {
     );
     writeln!(
         out,
-        "size_t cxxbridge1$rust_vec${}$len(const ::rust::Vec<{}> *ptr) noexcept;",
+        "::std::size_t cxxbridge1$rust_vec${}$len(const ::rust::Vec<{}> *ptr) noexcept;",
         instance, inner,
     );
     writeln!(
         out,
-        "size_t cxxbridge1$rust_vec${}$capacity(const ::rust::Vec<{}> *ptr) noexcept;",
+        "::std::size_t cxxbridge1$rust_vec${}$capacity(const ::rust::Vec<{}> *ptr) noexcept;",
         instance, inner,
     );
     writeln!(
@@ -1394,17 +1403,17 @@ fn write_rust_vec_extern(out: &mut OutFile, element: &RustName) {
     );
     writeln!(
         out,
-        "void cxxbridge1$rust_vec${}$reserve_total(::rust::Vec<{}> *ptr, size_t cap) noexcept;",
+        "void cxxbridge1$rust_vec${}$reserve_total(::rust::Vec<{}> *ptr, ::std::size_t cap) noexcept;",
         instance, inner,
     );
     writeln!(
         out,
-        "void cxxbridge1$rust_vec${}$set_len(::rust::Vec<{}> *ptr, size_t len) noexcept;",
+        "void cxxbridge1$rust_vec${}$set_len(::rust::Vec<{}> *ptr, ::std::size_t len) noexcept;",
         instance, inner,
     );
     writeln!(
         out,
-        "size_t cxxbridge1$rust_vec${}$stride() noexcept;",
+        "::std::size_t cxxbridge1$rust_vec${}$stride() noexcept;",
         instance,
     );
     writeln!(out, "#endif // CXXBRIDGE1_RUST_VEC_{}", instance);
@@ -1415,8 +1424,21 @@ fn write_rust_box_impl(out: &mut OutFile, ident: &Pair) {
     let instance = ident.to_symbol();
 
     writeln!(out, "template <>");
-    writeln!(out, "void Box<{}>::uninit() noexcept {{", inner);
-    writeln!(out, "  cxxbridge1$box${}$uninit(this);", instance);
+    writeln!(
+        out,
+        "{} *Box<{}>::allocation::alloc() noexcept {{",
+        inner, inner,
+    );
+    writeln!(out, "  return cxxbridge1$box${}$alloc();", instance);
+    writeln!(out, "}}");
+
+    writeln!(out, "template <>");
+    writeln!(
+        out,
+        "void Box<{}>::allocation::dealloc({} *ptr) noexcept {{",
+        inner, inner,
+    );
+    writeln!(out, "  cxxbridge1$box${}$dealloc(ptr);", instance);
     writeln!(out, "}}");
 
     writeln!(out, "template <>");
@@ -1442,12 +1464,20 @@ fn write_rust_vec_impl(out: &mut OutFile, element: &RustName) {
     writeln!(out, "}}");
 
     writeln!(out, "template <>");
-    writeln!(out, "size_t Vec<{}>::size() const noexcept {{", inner);
+    writeln!(
+        out,
+        "::std::size_t Vec<{}>::size() const noexcept {{",
+        inner,
+    );
     writeln!(out, "  return cxxbridge1$rust_vec${}$len(this);", instance);
     writeln!(out, "}}");
 
     writeln!(out, "template <>");
-    writeln!(out, "size_t Vec<{}>::capacity() const noexcept {{", inner);
+    writeln!(
+        out,
+        "::std::size_t Vec<{}>::capacity() const noexcept {{",
+        inner,
+    );
     writeln!(
         out,
         "  return cxxbridge1$rust_vec${}$capacity(this);",
@@ -1463,7 +1493,7 @@ fn write_rust_vec_impl(out: &mut OutFile, element: &RustName) {
     writeln!(out, "template <>");
     writeln!(
         out,
-        "void Vec<{}>::reserve_total(size_t cap) noexcept {{",
+        "void Vec<{}>::reserve_total(::std::size_t cap) noexcept {{",
         inner,
     );
     writeln!(
@@ -1474,7 +1504,11 @@ fn write_rust_vec_impl(out: &mut OutFile, element: &RustName) {
     writeln!(out, "}}");
 
     writeln!(out, "template <>");
-    writeln!(out, "void Vec<{}>::set_len(size_t len) noexcept {{", inner);
+    writeln!(
+        out,
+        "void Vec<{}>::set_len(::std::size_t len) noexcept {{",
+        inner,
+    );
     writeln!(
         out,
         "  return cxxbridge1$rust_vec${}$set_len(this, len);",
@@ -1483,7 +1517,7 @@ fn write_rust_vec_impl(out: &mut OutFile, element: &RustName) {
     writeln!(out, "}}");
 
     writeln!(out, "template <>");
-    writeln!(out, "size_t Vec<{}>::stride() noexcept {{", inner);
+    writeln!(out, "::std::size_t Vec<{}>::stride() noexcept {{", inner);
     writeln!(out, "  return cxxbridge1$rust_vec${}$stride();", instance);
     writeln!(out, "}}");
 }
@@ -1698,14 +1732,14 @@ fn write_cxx_vector(out: &mut OutFile, element: &RustName) {
     writeln!(out, "#define CXXBRIDGE1_VECTOR_{}", instance);
     writeln!(
         out,
-        "size_t cxxbridge1$std$vector${}$size(const ::std::vector<{}> &s) noexcept {{",
+        "::std::size_t cxxbridge1$std$vector${}$size(const ::std::vector<{}> &s) noexcept {{",
         instance, inner,
     );
     writeln!(out, "  return s.size();");
     writeln!(out, "}}");
     writeln!(
         out,
-        "const {} *cxxbridge1$std$vector${}$get_unchecked(const ::std::vector<{}> &s, size_t pos) noexcept {{",
+        "const {} *cxxbridge1$std$vector${}$get_unchecked(const ::std::vector<{}> &s, ::std::size_t pos) noexcept {{",
         inner, instance, inner,
     );
     writeln!(out, "  return &s[pos];");
