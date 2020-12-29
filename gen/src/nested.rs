@@ -52,9 +52,10 @@ fn sort_by_inner_namespace(apis: Vec<&Api>, depth: usize) -> NamespaceEntries {
 mod tests {
     use super::NamespaceEntries;
     use crate::syntax::namespace::Namespace;
-    use crate::syntax::{Api, Doc, ExternType, Lang, Pair};
+    use crate::syntax::{Api, Doc, ExternType, Lang, Lifetimes, Pair};
     use proc_macro2::{Ident, Span};
     use std::iter::FromIterator;
+    use syn::punctuated::Punctuated;
     use syn::Token;
 
     #[test]
@@ -125,12 +126,22 @@ mod tests {
 
     fn make_api(ns: Option<&str>, ident: &str) -> Api {
         let ns = ns.map_or(Namespace::ROOT, |ns| syn::parse_str(ns).unwrap());
+        let ident = Ident::new(ident, Span::call_site());
         Api::CxxType(ExternType {
             lang: Lang::Rust,
             doc: Doc::new(),
             derives: Vec::new(),
             type_token: Token![type](Span::call_site()),
-            name: Pair::new(ns, Ident::new(ident, Span::call_site())),
+            name: Pair {
+                namespace: ns,
+                cxx: ident.clone(),
+                rust: ident,
+            },
+            generics: Lifetimes {
+                lt_token: None,
+                lifetimes: Punctuated::new(),
+                gt_token: None,
+            },
             colon_token: None,
             bounds: Vec::new(),
             semi_token: Token![;](Span::call_site()),

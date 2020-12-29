@@ -30,7 +30,8 @@ pub mod ffi {
     enum Enum {
         AVal,
         BVal = 2020,
-        CVal,
+        #[cxx_name = "CVal"]
+        LastVal,
     }
 
     #[namespace = "A"]
@@ -119,6 +120,9 @@ pub mod ffi {
         fn c_take_str(s: &str);
         fn c_take_slice_char(s: &[c_char]);
         fn c_take_slice_shared(s: &[Shared]);
+        fn c_take_slice_shared_sort(s: &mut [Shared]);
+        fn c_take_slice_r(s: &[R]);
+        fn c_take_slice_r_sort(s: &mut [R]);
         fn c_take_rust_string(s: String);
         fn c_take_unique_ptr_string(s: UniquePtr<CxxString>);
         fn c_take_unique_ptr_vector_u8(v: UniquePtr<CxxVector<u8>>);
@@ -174,6 +178,8 @@ pub mod ffi {
         fn c_method_mut_on_shared(self: &mut Shared) -> &mut usize;
         fn c_set_array(self: &mut Array, value: i32);
 
+        fn c_get_use_count(weak: &WeakPtr<C>) -> usize;
+
         #[rust_name = "i32_overloaded_method"]
         fn cOverloadedMethod(&self, x: i32) -> String;
         #[rust_name = "str_overloaded_method"]
@@ -197,7 +203,9 @@ pub mod ffi {
     #[repr(u32)]
     #[derive(Hash)]
     enum COwnedEnum {
+        #[cxx_name = "CVAL1"]
         CVal1,
+        #[cxx_name = "CVAL2"]
         CVal2,
     }
 
@@ -473,7 +481,7 @@ fn r_return_enum(n: u32) -> ffi::Enum {
     } else if n <= 2020 {
         ffi::Enum::BVal
     } else {
-        ffi::Enum::CVal
+        ffi::Enum::LastVal
     }
 }
 

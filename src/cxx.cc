@@ -1,13 +1,7 @@
 #include "../include/cxx.h"
-#include <algorithm>
-#include <cassert>
 #include <cstring>
-#include <exception>
 #include <iostream>
 #include <memory>
-#include <stdexcept>
-#include <type_traits>
-#include <vector>
 
 extern "C" {
 void cxxbridge1$cxx_string$init(std::string *s, const std::uint8_t *ptr,
@@ -414,9 +408,9 @@ static_assert(sizeof(std::string) <= kMaxExpectedWordsInString * sizeof(void *),
       const std::vector<CXX_TYPE> &s) noexcept {                               \
     return s.size();                                                           \
   }                                                                            \
-  const CXX_TYPE *cxxbridge1$std$vector$##RUST_TYPE##$get_unchecked(           \
-      const std::vector<CXX_TYPE> &s, std::size_t pos) noexcept {              \
-    return &s[pos];                                                            \
+  CXX_TYPE *cxxbridge1$std$vector$##RUST_TYPE##$get_unchecked(                 \
+      std::vector<CXX_TYPE> *s, std::size_t pos) noexcept {                    \
+    return &(*s)[pos];                                                         \
   }                                                                            \
   void cxxbridge1$unique_ptr$std$vector$##RUST_TYPE##$null(                    \
       std::unique_ptr<std::vector<CXX_TYPE>> *ptr) noexcept {                  \
@@ -456,8 +450,7 @@ static_assert(sizeof(std::string) <= kMaxExpectedWordsInString * sizeof(void *),
   void cxxbridge1$rust_vec$##RUST_TYPE##$reserve_total(                        \
       rust::Vec<CXX_TYPE> *ptr, std::size_t cap) noexcept;                     \
   void cxxbridge1$rust_vec$##RUST_TYPE##$set_len(rust::Vec<CXX_TYPE> *ptr,     \
-                                                 std::size_t len) noexcept;    \
-  std::size_t cxxbridge1$rust_vec$##RUST_TYPE##$stride() noexcept;
+                                                 std::size_t len) noexcept;
 
 #define RUST_VEC_OPS(RUST_TYPE, CXX_TYPE)                                      \
   template <>                                                                  \
@@ -487,10 +480,6 @@ static_assert(sizeof(std::string) <= kMaxExpectedWordsInString * sizeof(void *),
   template <>                                                                  \
   void Vec<CXX_TYPE>::set_len(std::size_t len) noexcept {                      \
     cxxbridge1$rust_vec$##RUST_TYPE##$set_len(this, len);                      \
-  }                                                                            \
-  template <>                                                                  \
-  std::size_t Vec<CXX_TYPE>::stride() noexcept {                               \
-    return cxxbridge1$rust_vec$##RUST_TYPE##$stride();                         \
   }
 
 #define SHARED_PTR_OPS(RUST_TYPE, CXX_TYPE)                                    \
@@ -519,6 +508,31 @@ static_assert(sizeof(std::string) <= kMaxExpectedWordsInString * sizeof(void *),
   void cxxbridge1$std$shared_ptr$##RUST_TYPE##$drop(                           \
       const std::shared_ptr<CXX_TYPE> *self) noexcept {                        \
     self->~shared_ptr();                                                       \
+  }                                                                            \
+  static_assert(sizeof(std::weak_ptr<CXX_TYPE>) == 2 * sizeof(void *), "");    \
+  static_assert(alignof(std::weak_ptr<CXX_TYPE>) == alignof(void *), "");      \
+  void cxxbridge1$std$weak_ptr$##RUST_TYPE##$null(                             \
+      std::weak_ptr<CXX_TYPE> *ptr) noexcept {                                 \
+    new (ptr) std::weak_ptr<CXX_TYPE>();                                       \
+  }                                                                            \
+  void cxxbridge1$std$weak_ptr$##RUST_TYPE##$clone(                            \
+      const std::weak_ptr<CXX_TYPE> &self,                                     \
+      std::weak_ptr<CXX_TYPE> *ptr) noexcept {                                 \
+    new (ptr) std::weak_ptr<CXX_TYPE>(self);                                   \
+  }                                                                            \
+  void cxxbridge1$std$weak_ptr$##RUST_TYPE##$downgrade(                        \
+      const std::shared_ptr<CXX_TYPE> &shared,                                 \
+      std::weak_ptr<CXX_TYPE> *weak) noexcept {                                \
+    new (weak) std::weak_ptr<CXX_TYPE>(shared);                                \
+  }                                                                            \
+  void cxxbridge1$std$weak_ptr$##RUST_TYPE##$upgrade(                          \
+      const std::weak_ptr<CXX_TYPE> &weak,                                     \
+      std::shared_ptr<CXX_TYPE> *shared) noexcept {                            \
+    new (shared) std::shared_ptr<CXX_TYPE>(weak.lock());                       \
+  }                                                                            \
+  void cxxbridge1$std$weak_ptr$##RUST_TYPE##$drop(                             \
+      const std::weak_ptr<CXX_TYPE> *self) noexcept {                          \
+    self->~weak_ptr();                                                         \
   }
 
 // Usize and isize are the same type as one of the below.
@@ -548,6 +562,7 @@ static_assert(sizeof(std::string) <= kMaxExpectedWordsInString * sizeof(void *),
 
 #define FOR_EACH_SHARED_PTR(MACRO)                                             \
   FOR_EACH_NUMERIC(MACRO)                                                      \
+  MACRO(bool, bool)                                                            \
   MACRO(usize, std::size_t)                                                    \
   MACRO(isize, rust::isize)                                                    \
   MACRO(string, std::string)
