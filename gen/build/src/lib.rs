@@ -46,13 +46,31 @@
 //! ```
 
 #![allow(
+    clippy::cast_sign_loss,
+    clippy::default_trait_access,
+    clippy::doc_markdown,
     clippy::drop_copy,
+    clippy::enum_glob_use,
     clippy::inherent_to_string,
+    clippy::items_after_statements,
+    clippy::let_underscore_drop,
+    clippy::match_bool,
+    clippy::match_on_vec_items,
+    clippy::match_same_arms,
+    clippy::module_name_repetitions,
     clippy::needless_doctest_main,
+    clippy::needless_pass_by_value,
     clippy::new_without_default,
     clippy::nonminimal_bool,
+    clippy::option_if_let_else,
     clippy::or_fun_call,
+    clippy::redundant_else,
+    clippy::shadow_unrelated,
+    clippy::similar_names,
+    clippy::single_match_else,
+    clippy::struct_excessive_bools,
     clippy::too_many_arguments,
+    clippy::too_many_lines,
     clippy::toplevel_ref_arg
 )]
 
@@ -72,10 +90,10 @@ use crate::error::{Error, Result};
 use crate::gen::error::report;
 use crate::gen::Opt;
 use crate::paths::PathExt;
+use crate::syntax::map::{Entry, UnorderedMap};
 use crate::target::TargetDir;
 use cc::Build;
-use std::collections::btree_map::Entry;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::env;
 use std::ffi::{OsStr, OsString};
 use std::io::{self, Write};
@@ -188,7 +206,6 @@ fn build(rust_source_files: &mut dyn Iterator<Item = impl AsRef<Path>>) -> Resul
     let ref prj = Project::init()?;
     validate_cfg(prj)?;
     let this_crate = make_this_crate(prj)?;
-    this_crate.print_to_cargo();
 
     let mut build = Build::new();
     build.cpp(true);
@@ -198,6 +215,7 @@ fn build(rust_source_files: &mut dyn Iterator<Item = impl AsRef<Path>>) -> Resul
         generate_bridge(prj, &mut build, path.as_ref())?;
     }
 
+    this_crate.print_to_cargo();
     eprintln!("\nCXX include path:");
     for header_dir in this_crate.header_dirs {
         build.include(&header_dir.path);
@@ -270,7 +288,7 @@ fn make_this_crate(prj: &Project) -> Result<Crate> {
         });
     }
 
-    let mut header_dirs_index = BTreeMap::new();
+    let mut header_dirs_index = UnorderedMap::new();
     let mut used_header_links = BTreeSet::new();
     let mut used_header_prefixes = BTreeSet::new();
     for krate in deps::direct_dependencies() {
@@ -425,8 +443,9 @@ fn best_effort_copy_headers(src: &Path, dst: &Path, max_depth: usize) {
             }
             Ok(file_type) if file_type.is_file() => {
                 let src = entry.path();
-                if src.extension() != Some(OsStr::new("h")) {
-                    continue;
+                match src.extension().and_then(OsStr::to_str) {
+                    Some("h") | Some("hh") | Some("hpp") => {}
+                    _ => continue,
                 }
                 if !dst_created && fs::create_dir_all(dst).is_err() {
                     return;

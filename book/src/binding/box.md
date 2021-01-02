@@ -18,14 +18,12 @@ public:
       typename std::add_pointer<typename std::add_const<T>::type>::type;
   using pointer = typename std::add_pointer<T>::type;
 
-  Box(const Box &);
   Box(Box &&) noexcept;
   ~Box() noexcept;
 
   explicit Box(const T &);
   explicit Box(T &&);
 
-  Box &operator=(const Box &);
   Box &operator=(Box &&) noexcept;
 
   const T *operator->() const noexcept;

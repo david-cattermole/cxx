@@ -1,7 +1,6 @@
 use crate::syntax::{
-    Array, ExternFn, Impl, Include, Receiver, Ref, Signature, SliceRef, Ty1, Type,
+    Array, ExternFn, Include, Lifetimes, Receiver, Ref, Signature, SliceRef, Ty1, Type, Var,
 };
-use std::borrow::Borrow;
 use std::hash::{Hash, Hasher};
 use std::mem;
 use std::ops::{Deref, DerefMut};
@@ -77,6 +76,38 @@ impl PartialEq for Type {
             (Type::SliceRef(lhs), Type::SliceRef(rhs)) => lhs == rhs,
             (Type::Void(_), Type::Void(_)) => true,
             (_, _) => false,
+        }
+    }
+}
+
+impl Eq for Lifetimes {}
+
+impl PartialEq for Lifetimes {
+    fn eq(&self, other: &Lifetimes) -> bool {
+        let Lifetimes {
+            lt_token: _,
+            lifetimes,
+            gt_token: _,
+        } = self;
+        let Lifetimes {
+            lt_token: _,
+            lifetimes: lifetimes2,
+            gt_token: _,
+        } = other;
+        lifetimes.iter().eq(lifetimes2)
+    }
+}
+
+impl Hash for Lifetimes {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        let Lifetimes {
+            lt_token: _,
+            lifetimes,
+            gt_token: _,
+        } = self;
+        lifetimes.len().hash(state);
+        for lifetime in lifetimes {
+            lifetime.hash(state);
         }
     }
 }
@@ -265,7 +296,23 @@ impl PartialEq for Signature {
             && ret == ret2
             && throws == throws2
             && args.len() == args2.len()
-            && args.iter().zip(args2).all(|(arg, arg2)| arg == arg2)
+            && args.iter().zip(args2).all(|(arg, arg2)| {
+                let Var {
+                    doc: _,
+                    attrs: _,
+                    visibility: _,
+                    name: _,
+                    ty,
+                } = arg;
+                let Var {
+                    doc: _,
+                    attrs: _,
+                    visibility: _,
+                    name: _,
+                    ty: ty2,
+                } = arg2;
+                ty == ty2
+            })
     }
 }
 
@@ -285,7 +332,14 @@ impl Hash for Signature {
         unsafety.is_some().hash(state);
         receiver.hash(state);
         for arg in args {
-            arg.hash(state);
+            let Var {
+                doc: _,
+                attrs: _,
+                visibility: _,
+                name: _,
+                ty,
+            } = arg;
+            ty.hash(state);
         }
         ret.hash(state);
         throws.hash(state);
@@ -339,49 +393,5 @@ impl Hash for Receiver {
         lifetime.hash(state);
         mutable.hash(state);
         ty.hash(state);
-    }
-}
-
-impl Hash for Impl {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        let Impl {
-            impl_token: _,
-            negative,
-            ty,
-            brace_token: _,
-            negative_token: _,
-        } = self;
-        if *negative {
-            negative.hash(state);
-        }
-        ty.hash(state);
-    }
-}
-
-impl Eq for Impl {}
-
-impl PartialEq for Impl {
-    fn eq(&self, other: &Impl) -> bool {
-        let Impl {
-            impl_token: _,
-            negative,
-            ty,
-            brace_token: _,
-            negative_token: _,
-        } = self;
-        let Impl {
-            impl_token: _,
-            negative: negative2,
-            ty: ty2,
-            brace_token: _,
-            negative_token: _,
-        } = other;
-        negative == negative2 && ty == ty2
-    }
-}
-
-impl Borrow<Type> for &Impl {
-    fn borrow(&self) -> &Type {
-        &self.ty
     }
 }

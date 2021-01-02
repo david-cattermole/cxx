@@ -1,44 +1,46 @@
 use crate::syntax::improper::ImproperCtype;
+use crate::syntax::instantiate::ImplKey;
+use crate::syntax::map::{OrderedMap, UnorderedMap};
 use crate::syntax::report::Errors;
-use crate::syntax::set::{OrderedSet as Set, UnorderedSet};
+use crate::syntax::resolve::Resolution;
+use crate::syntax::set::{OrderedSet, UnorderedSet};
 use crate::syntax::trivial::{self, TrivialReason};
 use crate::syntax::{
-    toposort, Api, Enum, ExternType, Impl, Pair, RustName, Struct, Type, TypeAlias,
+    toposort, Api, Atom, Enum, ExternType, Impl, Lifetimes, Pair, Struct, Type, TypeAlias,
 };
 use proc_macro2::Ident;
 use quote::ToTokens;
-use std::collections::BTreeMap as Map;
 
 pub struct Types<'a> {
-    pub all: Set<&'a Type>,
-    pub structs: Map<&'a Ident, &'a Struct>,
-    pub enums: Map<&'a Ident, &'a Enum>,
-    pub cxx: Set<&'a Ident>,
-    pub rust: Set<&'a Ident>,
-    pub aliases: Map<&'a Ident, &'a TypeAlias>,
-    pub untrusted: Map<&'a Ident, &'a ExternType>,
-    pub required_trivial: Map<&'a Ident, Vec<TrivialReason<'a>>>,
-    pub explicit_impls: Set<&'a Impl>,
-    pub resolutions: Map<&'a RustName, &'a Pair>,
+    pub all: OrderedSet<&'a Type>,
+    pub structs: UnorderedMap<&'a Ident, &'a Struct>,
+    pub enums: UnorderedMap<&'a Ident, &'a Enum>,
+    pub cxx: UnorderedSet<&'a Ident>,
+    pub rust: UnorderedSet<&'a Ident>,
+    pub aliases: UnorderedMap<&'a Ident, &'a TypeAlias>,
+    pub untrusted: UnorderedMap<&'a Ident, &'a ExternType>,
+    pub required_trivial: UnorderedMap<&'a Ident, Vec<TrivialReason<'a>>>,
+    pub impls: OrderedMap<ImplKey<'a>, Option<&'a Impl>>,
+    pub resolutions: UnorderedMap<&'a Ident, Resolution<'a>>,
     pub struct_improper_ctypes: UnorderedSet<&'a Ident>,
     pub toposorted_structs: Vec<&'a Struct>,
 }
 
 impl<'a> Types<'a> {
     pub fn collect(cx: &mut Errors, apis: &'a [Api]) -> Self {
-        let mut all = Set::new();
-        let mut structs = Map::new();
-        let mut enums = Map::new();
-        let mut cxx = Set::new();
-        let mut rust = Set::new();
-        let mut aliases = Map::new();
-        let mut untrusted = Map::new();
-        let mut explicit_impls = Set::new();
-        let mut resolutions = Map::new();
+        let mut all = OrderedSet::new();
+        let mut structs = UnorderedMap::new();
+        let mut enums = UnorderedMap::new();
+        let mut cxx = UnorderedSet::new();
+        let mut rust = UnorderedSet::new();
+        let mut aliases = UnorderedMap::new();
+        let mut untrusted = UnorderedMap::new();
+        let mut impls = OrderedMap::new();
+        let mut resolutions = UnorderedMap::new();
         let struct_improper_ctypes = UnorderedSet::new();
         let toposorted_structs = Vec::new();
 
-        fn visit<'a>(all: &mut Set<&'a Type>, ty: &'a Type) {
+        fn visit<'a>(all: &mut OrderedSet<&'a Type>, ty: &'a Type) {
             all.insert(ty);
             match ty {
                 Type::Ident(_) | Type::Str(_) | Type::Void(_) => {}
@@ -62,8 +64,8 @@ impl<'a> Types<'a> {
             }
         }
 
-        let mut add_resolution = |pair: &'a Pair| {
-            resolutions.insert(RustName::from_ref(&pair.rust), pair);
+        let mut add_resolution = |name: &'a Pair, generics: &'a Lifetimes| {
+            resolutions.insert(&name.rust, Resolution { name, generics });
         };
 
         let mut type_names = UnorderedSet::new();
@@ -93,7 +95,7 @@ impl<'a> Types<'a> {
                     for field in &strct.fields {
                         visit(&mut all, &field.ty);
                     }
-                    add_resolution(&strct.name);
+                    add_resolution(&strct.name, &strct.generics);
                 }
                 Api::Enum(enm) => {
                     all.insert(&enm.repr_type);
@@ -109,7 +111,7 @@ impl<'a> Types<'a> {
                         duplicate_name(cx, enm, ident);
                     }
                     enums.insert(ident, enm);
-                    add_resolution(&enm.name);
+                    add_resolution(&enm.name, &enm.generics);
                 }
                 Api::CxxType(ety) => {
                     let ident = &ety.name.rust;
@@ -126,7 +128,7 @@ impl<'a> Types<'a> {
                     if !ety.trusted {
                         untrusted.insert(ident, ety);
                     }
-                    add_resolution(&ety.name);
+                    add_resolution(&ety.name, &ety.generics);
                 }
                 Api::RustType(ety) => {
                     let ident = &ety.name.rust;
@@ -134,7 +136,7 @@ impl<'a> Types<'a> {
                         duplicate_name(cx, ety, ident);
                     }
                     rust.insert(ident);
-                    add_resolution(&ety.name);
+                    add_resolution(&ety.name, &ety.generics);
                 }
                 Api::CxxFunction(efn) | Api::RustFunction(efn) => {
                     // Note: duplication of the C++ name is fine because C++ has
@@ -156,12 +158,34 @@ impl<'a> Types<'a> {
                     }
                     cxx.insert(ident);
                     aliases.insert(ident, alias);
-                    add_resolution(&alias.name);
+                    add_resolution(&alias.name, &alias.generics);
                 }
                 Api::Impl(imp) => {
                     visit(&mut all, &imp.ty);
-                    explicit_impls.insert(imp);
+                    if let Some(key) = imp.ty.impl_key() {
+                        impls.insert(key, Some(imp));
+                    }
                 }
+            }
+        }
+
+        for ty in &all {
+            let impl_key = match ty.impl_key() {
+                Some(impl_key) => impl_key,
+                None => continue,
+            };
+            let implicit_impl = match impl_key {
+                ImplKey::RustBox(ident)
+                | ImplKey::RustVec(ident)
+                | ImplKey::UniquePtr(ident)
+                | ImplKey::SharedPtr(ident)
+                | ImplKey::WeakPtr(ident)
+                | ImplKey::CxxVector(ident) => {
+                    Atom::from(ident).is_none() && !aliases.contains_key(ident)
+                }
+            };
+            if implicit_impl && !impls.contains_key(&impl_key) {
+                impls.insert(impl_key, None);
             }
         }
 
@@ -181,7 +205,7 @@ impl<'a> Types<'a> {
             aliases,
             untrusted,
             required_trivial,
-            explicit_impls,
+            impls,
             resolutions,
             struct_improper_ctypes,
             toposorted_structs,
@@ -189,7 +213,7 @@ impl<'a> Types<'a> {
 
         types.toposorted_structs = toposort::sort(cx, apis, &types);
 
-        let mut unresolved_structs: Vec<&Ident> = types.structs.keys().copied().collect();
+        let mut unresolved_structs = types.structs.keys();
         let mut new_information = true;
         while new_information {
             new_information = false;
@@ -235,10 +259,6 @@ impl<'a> Types<'a> {
             ImproperCtype::Definite(improper) => improper,
             ImproperCtype::Depends(ident) => self.struct_improper_ctypes.contains(ident),
         }
-    }
-
-    pub fn resolve(&self, ident: &RustName) -> &Pair {
-        self.resolutions.get(ident).expect("Unable to resolve type")
     }
 }
 

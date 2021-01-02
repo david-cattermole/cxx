@@ -363,23 +363,30 @@
 //! </table>
 
 #![no_std]
-#![doc(html_root_url = "https://docs.rs/cxx/1.0.23")]
+#![doc(html_root_url = "https://docs.rs/cxx/1.0.25")]
 #![deny(improper_ctypes)]
 #![allow(non_camel_case_types)]
 #![allow(
     clippy::cognitive_complexity,
     clippy::declare_interior_mutable_const,
+    clippy::doc_markdown,
+    clippy::empty_enum,
     clippy::inherent_to_string,
+    clippy::items_after_statements,
     clippy::large_enum_variant,
     clippy::len_without_is_empty,
+    clippy::missing_errors_doc,
     clippy::missing_safety_doc,
     clippy::module_inception,
+    clippy::module_name_repetitions,
+    clippy::must_use_candidate,
     clippy::needless_doctest_main,
     clippy::new_without_default,
     clippy::or_fun_call,
     clippy::ptr_arg,
     clippy::toplevel_ref_arg,
-    clippy::useless_let_if_seq
+    clippy::useless_let_if_seq,
+    clippy::wrong_self_convention
 )]
 
 #[cfg(built_with_cargo)]
